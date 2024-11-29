@@ -1,32 +1,3 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-import pandas as pd
-import os
-import datetime
-
-app = Flask(__name__, static_folder='dist')
-CORS(app)
-
-# 文件目录设置
-csv_dir = "final_data"
-output_dir = "output_files"
-json_dir = "json_files"
-
-# 确保目录存在
-os.makedirs(csv_dir, exist_ok=True)
-os.makedirs(output_dir, exist_ok=True)
-os.makedirs(json_dir, exist_ok=True)
-
-# 路由：返回静态文件
-@app.route('/')
-def index():
-    return send_from_directory(app.static_folder, 'index.html')
-
-@app.route('/<path:path>')
-def static_proxy(path):
-    return send_from_directory(app.static_folder, path)
-
-# 路由：处理提交逻辑
 @app.route('/submit', methods=['POST'])
 def submit():
     print("Received request:", request.form)  # 打印请求表单数据
@@ -60,29 +31,17 @@ def submit():
             (df['Predicted Strength'].max() - df['Predicted Strength'].min()) * 100
         ).round(2)
 
-        # 筛选 Score > 80 的记录
-        df = df[df['Score'] > 80]
-
-        # 检查是否有符合条件的记录
-        if df.empty:
-            return jsonify({"error": "没有符合 Score > 80 的记录！"}), 400
-
         # 计算与目标强度的绝对差值
         df['Strength_Difference'] = abs(df['Promoter Strength'] - target_strength)
 
-        # 按 Strength_Difference 排序后取前 promoter_numbers 条记录
-        selected_df = (
-            df.sort_values(by='Strength_Difference')
-              .head(promoter_numbers)
-              .sample(frac=1)  # 随机化输出顺序
-              .reset_index(drop=True)
-        )
+        # 按 Strength_Difference 和 Score 排序：首先是 Strength_Difference 小的，其次是 Score 大的
+        sorted_df = df.sort_values(by=['Strength_Difference', 'Score'], ascending=[True, False])
+
+        # 选取前 promoter_numbers 条记录
+        selected_df = sorted_df.head(promoter_numbers).reset_index(drop=True)
 
         # 仅保留 Promoter sequences 和 Promoter Strength 列
         result_df = selected_df[['Promoter Sequences', 'Promoter Strength']]
-
-        # 确保返回的结果数量等于用户请求的数量
-        result_df = result_df.head(promoter_numbers)
 
         # 保存结果到 CSV 文件
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -95,11 +54,7 @@ def submit():
             result_df.to_csv(f, index=False)
 
         # 返回最接近目标强度的前 10 条记录作为响应
-        top_sequences = (
-            df.sort_values(by='Strength_Difference')  # 再次按差值排序确保精确
-              .head(10)[['Promoter Sequences', 'Promoter Strength']]
-              .reset_index(drop=True)
-        )
+        top_sequences = sorted_df.head(10)[['Promoter Sequences', 'Promoter Strength']].reset_index(drop=True)
 
         # 构建响应数据
         response_data = {
@@ -112,6 +67,3 @@ def submit():
         return jsonify({"error": "输入数据格式有误，请检查"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
